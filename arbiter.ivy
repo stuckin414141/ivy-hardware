@@ -1,0 +1,117 @@
+#lang ivy1.8
+
+# Simple arbiter between two clients
+
+export action posedge 
+
+module signal0 = {
+    action raise
+
+    specification {
+        relation now
+        after init { now := false; }
+        before raise {
+            now := true;
+            now := false;
+        }
+        invariant ~now
+    }
+}
+
+
+isolate xbar_body = {
+    type client
+    interpret client -> bv[1]
+    wire has_req_in(C : client) : bool 
+    wire finished(C : client) : bool
+
+    var has_req(C : client) : bool
+    var owner : client
+    var prev_owner : client
+    var owned : bool
+
+    after init {
+        owned := false;
+        prev_owner := 0;
+    }
+
+    instance posedge_sig : signal0
+    
+    after posedge {
+        call posedge_sig.raise;
+        if ~owned & (has_req(0) | has_req(1)) {
+            if has_req(0) & ~has_req(1) {
+                owner := 0;
+            }
+            if ~has_req(0) & has_req(1) {
+                owner := 1;
+            }
+            if has_req(0) & has_req(1) {
+                if prev_owner = 0 {
+                    owner := 1;
+                } else {
+                    owner := 0;
+                }
+            }
+            owned := true; 
+        }
+
+        if owned & finished(owner) {
+            prev_owner := owner;
+            owned := false;
+        }
+
+        has_req(C) := has_req_in(C) if ~has_req(C) else has_req(C);
+    }
+
+    temporal axiom [owners_finish] 
+        globally (owned -> eventually finished(owner)) 
+
+    temporal property [finished_entails_relinquish]
+    forall C : client.
+    globally eventually posedge_sig.now ->
+    globally (finished(owner) -> eventually owner = C)
+    proof {
+        tactic skolemize;
+        tactic ranking with {
+            definition work_created(X : client) = true
+            definition work_needed(X) = X = owner & X ~= _C
+            definition work_invar = owner ~= _C
+            definition work_progress = posedge_sig.now
+            definition work_helpful = true
+        }
+    }
+
+    temporal property 
+    forall C : client. 
+    globally eventually posedge_sig.now -> 
+    globally (owned -> eventually owner = C)
+    proof {
+        tactic skolemize;
+        instantiate owners_finish
+        instantiate finished_entails_relinquish with C = _C
+        tactic ranking with {
+            # this is just chaining lemmas
+            definition work_created = true
+            definition work_needed = true
+            definition work_invar = eventually finished(owner)
+            definition work_progress = finished(owner)
+            definition work_helpful = true
+        }
+    }
+
+    temporal property 
+    forall C : client. 
+    globally eventually posedge_sig.now ->
+    globally (has_req(C) -> owner = C)
+    proof {
+        tactic skolemize; 
+        tactic ranking with {
+            definition work_created = true
+            definition work_needed = true
+            definition work_invar = owned
+            definition work_progress = finished(owner)
+            definition work_helpful = true
+        }
+    } 
+}

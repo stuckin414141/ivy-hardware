@@ -1,0 +1,50 @@
+#lang ivy1.8
+
+# Simple counter with wrap-around
+
+export action posedge
+
+isolate xbar = {
+
+    module signal0 = {
+        action raise
+
+        specification {
+            relation now
+            after init { now := false; }
+            before raise {
+                now := true;
+                now := false;
+            }
+            invariant ~now
+        }
+    }
+    type onebit
+    interpret onebit -> bv[4]
+
+    instance posedge_sig : signal0 
+
+    var counter : onebit
+    after init {
+        counter := 0;
+    }
+    after posedge {
+        call posedge_sig.raise;
+        counter := counter + 1;
+    }
+
+    temporal property 
+    (globally eventually posedge_sig.now) ->
+    (globally eventually counter = 4)
+    proof {
+        # TODO: we need an actual ranking now, # of bv4s that are less than current counter value. 
+        tactic ranking with {
+            definition work_created[0](X : onebit) = true
+            definition work_needed[0](X) = (counter < X & 4 < X & counter > 4) | (counter < 4 & counter < X & X < 4) | (counter > 4 & X < 4)
+            definition work_invar[0] = counter ~= 4
+            definition work_progress[0] = posedge_sig.now
+            definition work_helpful[0] = true
+        }
+        showgoals
+    }
+}
